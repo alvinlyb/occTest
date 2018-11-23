@@ -2,6 +2,8 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <TopoDS.hxx>
+#include <TopoDS_Shape.hxx>
 #include <AIS_InteractiveContext.hxx>
 
 class OccView;
@@ -24,6 +26,8 @@ protected:
 
     //! make toroidal helix.
     void makeToroidalHelix(void);
+
+    TopoDS_Shape reCreateBottle(const double width, const double height, const double thick);
 private slots:
     //创建元素
     void makeBox(void);
@@ -43,6 +47,8 @@ private slots:
     void testCommon(void);
     //螺旋线
     void testHelix(void);
+    //test
+    void makeCircle(void);
 private:
     Ui::MainWindow *ui;
     OccView* myOccView;

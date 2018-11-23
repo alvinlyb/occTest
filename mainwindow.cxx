@@ -50,6 +50,15 @@
 #include <BRepAlgoAPI_Common.hxx>
 
 #include <AIS_Shape.hxx>
+#include <Geom_TrimmedCurve.hxx>
+#include <Geom_Plane.hxx>
+#include <Geom2d_Ellipse.hxx>
+#include <GC_MakeArcOfCircle.hxx>
+#include <GC_MakeSegment.hxx>
+#include <gp_Pnt2d.hxx>
+#include <Standard_Real.hxx>
+#include <BRepOffsetAPI_MakeThickSolid.hxx>
+
 #include <TCollection_AsciiString.hxx>
 
 #include "qdebug.h"
@@ -96,15 +105,28 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->actionCommon, SIGNAL(triggered()), this, SLOT(testCommon()));
     //螺旋线
     connect(ui->actionHelix, SIGNAL(triggered()), this, SLOT(testHelix()));
+    //test
+    connect(ui->actionCircle,SIGNAL(triggered()),this,SLOT(makeCircle()));
 }
 MainWindow::~MainWindow()
 {
     delete ui;
 }
 
+void MainWindow::makeCircle(void)
+{
+    gp_Pnt p1(50.0,0.0,0.0),p2(50.0,0.0,0.0);
+    Handle(Geom_TrimmedCurve) seg1 = GC_MakeSegment(p1, p2);
+    TopoDS_Edge edge=BRepBuilderAPI_MakeEdge(seg1);
+
+   // edge->SetColor(Quantity_NOC_LIMEGREEN);
+
+    //myOccView->getContext()->Display(edge, Standard_True);
+}
+
 void MainWindow::makeBox()
 {
-    TopoDS_Shape aTopoBox=BRepPrimAPI_MakeBox(3.0,4.0,5.0).Shape();
+    TopoDS_Shape aTopoBox=reCreateBottle(70.0,50.0,30.0);
     Handle(AIS_Shape) anAisBox=new AIS_Shape(aTopoBox);
     anAisBox->SetColor(Quantity_NOC_AZURE);
     myOccView->getContext()->Display(anAisBox,Standard_True);
@@ -115,13 +137,13 @@ void MainWindow::makeCone()
     gp_Ax2 anAxis;
     anAxis.SetLocation(gp_Pnt(0.0,10.0,0.0));
 
-    TopoDS_Shape aTopoReducer=BRepPrimAPI_MakeCone(anAxis,3.0,1.5,50.0).Shape();
+    TopoDS_Shape aTopoReducer=BRepPrimAPI_MakeCone(anAxis,3.0,1.5,5.0).Shape();
     Handle(AIS_Shape) anAisReducer=new AIS_Shape(aTopoReducer);
 
     anAisReducer->SetColor(Quantity_NOC_BISQUE);
 
     anAxis.SetLocation(gp_Pnt(8.0,10.0,0.0));
-    TopoDS_Shape aTopoCone=BRepPrimAPI_MakeCone(anAxis,3.0,0.0,10).Shape();
+    TopoDS_Shape aTopoCone=BRepPrimAPI_MakeSphere(5);
     Handle(AIS_Shape) anAisCone=new AIS_Shape(aTopoCone);
 
     anAisCone->SetColor(Quantity_NOC_CHOCOLATE);
@@ -603,4 +625,85 @@ void MainWindow::makeToroidalHelix()
         anAisPipe->SetColor(Quantity_NOC_CORNSILK1);
         myOccView->getContext()->Display(anAisPipe, Standard_True);
     }
+}
+
+TopoDS_Shape MainWindow::reCreateBottle(const double width, const double height, const double thick)
+{
+    gp_Pnt  pnt1(-width/2, 0, 0),
+            pnt2(-width/2, -thick/4, 0),
+            pnt3(0, -thick/2, 0),
+            pnt4(width/2, -thick/4, 0),
+            pnt5(width/2, 0, 0);
+
+    // create geometry data of segment and arc segment
+    Handle(Geom_TrimmedCurve) seg1 = GC_MakeSegment(pnt1, pnt2);    //构造边
+    Handle(Geom_TrimmedCurve) arcSeg = GC_MakeArcOfCircle(pnt2, pnt3, pnt4);    //构造圆弧
+    Handle(Geom_TrimmedCurve) seg2 = GC_MakeSegment(pnt4, pnt5);
+    // create topological data with above geometry data
+    TopoDS_Edge edge1 = BRepBuilderAPI_MakeEdge(seg1);
+    TopoDS_Edge arcEdge = BRepBuilderAPI_MakeEdge(arcSeg);
+    TopoDS_Edge edge2 = BRepBuilderAPI_MakeEdge(seg2);
+
+    // make wire composited by above topological data
+    TopoDS_Wire wireHalfProfile = BRepBuilderAPI_MakeWire(edge1, arcEdge, edge2);   //将上面的拓扑边组成开环
+
+    // make mirror wire
+    //gp_Pnt mirrorPnt(0,0,0);    //创建一个镜像原点
+    //gp_Dir mirrorDir(1,0,0);    //镜像方向
+    gp_Ax1 mirrorAx = gp::OX();     //快速创建上现两个参数
+    gp_Trsf mirrorTrsf;
+    mirrorTrsf.SetMirror(mirrorAx); //设置镜像矩阵
+    //生成镜像
+    TopoDS_Shape mirrorShape = BRepBuilderAPI_Transform(wireHalfProfile, mirrorTrsf);
+    TopoDS_Wire wireOtherHalfProfile = TopoDS::Wire(mirrorShape);
+    // composite two half wire to bottle bottom profile
+    BRepBuilderAPI_MakeWire mkWire;
+    mkWire.Add(wireHalfProfile);    //添加镜像的一边
+    mkWire.Add(wireOtherHalfProfile);   //添加镜像别一边
+    TopoDS_Wire wireProfile = mkWire.Wire();    //最终生成ToPoDS_wire线
+
+    // create bottle body 生成瓶身
+    TopoDS_Face bottomFace = BRepBuilderAPI_MakeFace(wireProfile);  //把上面的闭环线修改成面填充形式
+    gp_Vec prismVec(0, 0, height);  //拉伸的向量参数
+    TopoDS_Shape prismShape = BRepPrimAPI_MakePrism(bottomFace, prismVec);  //拉伸
+    //----fillet to round edge
+    /*
+    BRepFilletAPI_MakeFillet mkFillet(prismShape);  //导角函数先传入一个TopoDS_Shape然后再按需要添加圆角化的边和半径
+    //对shape进行边的遍历TopExp_EXplorer
+    for (TopExp_Explorer edgeExp(prismShape, TopAbs_EDGE); edgeExp.More(); edgeExp.Next())
+    {
+        const TopoDS_Edge& edge = TopoDS::Edge(edgeExp.Current());
+        mkFillet.Add(thick/15, edge);;
+    }
+    TopoDS_Shape body = mkFillet.Shape();
+
+    // create neck 瓶颈的创建
+    gp_Pnt neckPnt(0, 0, height);   //位置
+    gp_Dir neckDir(0, 0, 1);
+    gp_Ax2 neckAx(neckPnt, neckDir);    //相当于位置切面
+    double neckRadius = thick/4, neckHeight = height/10;
+    TopoDS_Shape neck = BRepPrimAPI_MakeCylinder(neckAx, neckRadius, neckHeight);   //创建圆柱
+
+    // apply boolean operation fuse, union body and neck
+    TopoDS_Shape bottle = BRepAlgoAPI_Fuse(body, neck); //布尔交集运算使瓶身body与瓶颈neck连接在一起
+
+    // make thick solid
+    TopTools_ListOfShape facesRemoved;
+    //遍历面
+    for (TopExp_Explorer faceExp(bottle, TopAbs_FACE); faceExp.More(); faceExp.Next())
+    {
+        TopoDS_Face face = TopoDS::Face(faceExp.Current());
+        Handle(Geom_Surface) surface = BRep_Tool::Surface(face);    //从拓扑信息得到几何信息
+        if (surface->DynamicType() == STANDARD_TYPE(Geom_Plane))
+        {
+            Handle(Geom_Plane) plane = Handle(Geom_Plane)::DownCast(surface);
+            gp_Pnt locPnt = plane->Location();
+            if (locPnt.Z() > height)
+                facesRemoved.Append(face);
+        }
+    }
+    //连换成一个壳的过程
+    bottle = BRepOffsetAPI_MakeThickSolid(bottle, facesRemoved, -thick/50, 1.e-3);
+*/
+    return prismShape;
 }
